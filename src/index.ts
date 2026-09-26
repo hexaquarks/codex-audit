@@ -3,8 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { readSessionSummaries, type SessionSummary } from "./audit.js";
 import { parseCommandArguments, usage } from "./cli.js";
-import { findInsights } from "./insights.js";
-import { createExplanation, createUsageReport } from "./report.js";
+import { openDashboard } from "./dashboard.js";
+import { createUsageReport } from "./report.js";
+import { createAuditSnapshot, loadLatestAuditSnapshot, saveAuditSnapshot } from "./snapshot.js";
 import { startLoadingIndicator } from "./terminal.js";
 
 const main = async (): Promise<void> => {
@@ -12,6 +13,15 @@ const main = async (): Promise<void> => {
     const command = parseCommandArguments(commandLineArguments);
     if (command.kind === "help") {
         console.log(usage);
+        return;
+    }
+
+    if (command.kind === "open") {
+        const snapshot = await loadLatestAuditSnapshot();
+        if (!snapshot) throw new Error("No saved report yet. Run codex-audit first, then try codex-audit open.");
+
+        await openDashboard(snapshot);
+        console.log("Opened the latest audit in your browser.");
         return;
     }
 
@@ -25,12 +35,10 @@ const main = async (): Promise<void> => {
         loadingIndicator.stop();
     }
 
-    if (command.kind === "explain") {
-        const selectedSessions = sessionSummaries.slice(0, command.sessionLimit);
-        console.log(createExplanation(findInsights(selectedSessions), command.insightNumber));
-        return;
-    }
-    console.log(createUsageReport(sessionSummaries, command.sessionLimit));
+    const selectedSessions = sessionSummaries.slice(0, command.sessionLimit);
+    await saveAuditSnapshot(createAuditSnapshot(selectedSessions));
+    console.log(createUsageReport(selectedSessions, selectedSessions.length));
+    console.log("\nOpen this report in your browser for more context: codex-audit open");
 };
 
 void main().catch((error: unknown) => {

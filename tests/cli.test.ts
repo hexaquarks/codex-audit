@@ -13,6 +13,10 @@ test("uses the requested session limit", () => {
     });
 });
 
+test("opens the latest saved dashboard", () => {
+    assert.deepEqual(parseCommandArguments(["open"]), { kind: "open" });
+});
+
 test("rejects an invalid session limit", () => {
     assert.throws(() => parseCommandArguments(["--limit", "0"]), /positive integer/);
 });

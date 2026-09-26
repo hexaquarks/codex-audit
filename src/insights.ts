@@ -14,6 +14,7 @@ export interface InsightEvent {
     session: string; // Project label of the source session.
     turn?: number; // User turn when the detector can identify one.
     timestamp: string; // Event timestamp used as supporting evidence.
+    activity?: string; // Plain-language category of the activity that produced this event.
     detail: string; // Privacy-preserving description of the matching event.
 }
 
@@ -32,14 +33,29 @@ export interface Insight {
 type InsightDetector = (sessions: readonly SessionSummary[]) => Insight | undefined;
 
 const format = (value: number): string => new Intl.NumberFormat("en-US").format(value);
+const isTerminalCommand = (name: string): boolean => name.includes("exec");
+const isFileRead = (name: string): boolean => name.includes("read_file") || name.includes("readfile");
+const isProjectSearch = (name: string): boolean => name.includes("search") || name.includes("find");
+const isFileEdit = (name: string): boolean => name.includes("patch") || name.includes("edit") || name.includes("write");
+
+const describeTool = (name: string): string => {
+    const normalizedName = name.toLowerCase();
+    if (isTerminalCommand(normalizedName)) return "Terminal command";
+    if (isFileRead(normalizedName)) return "File read";
+    if (isProjectSearch(normalizedName)) return "Project search";
+    if (isFileEdit(normalizedName)) return "File edit";
+    return "Tool action";
+};
+
 const toolSummary = (tools: readonly ToolCall[]): string => {
     if (!tools.length) return "no tool calls logged";
 
-    const names = [...new Set(tools.map((tool) => tool.name))].join(", ");
-    return `${tools.length} tool call${tools.length === 1 ? "" : "s"}: ${names}`;
+    const activities = [...new Set(tools.map((tool) => describeTool(tool.name)))].join(", ");
+    return `${tools.length} action${tools.length === 1 ? "" : "s"}: ${activities}`;
 };
 
-const MAX_INSIGHTS = 3;
+const MAX_FINDINGS = 3;
+const MAX_HIGHEST_TOKEN_REQUESTS = 3;
 const MIN_REPEATED_CALLS = 3;
 const LARGE_TOOL_OUTPUT_BYTES = 12_000;
 const CROWDED_CONTEXT_RATIO = 0.8;
@@ -65,7 +81,7 @@ const detectCostliestTurns = (sessions: readonly SessionSummary[]): Insight | un
 
     const candidates = [...mostCostlyByTurn.values()]
         .sort((a, b) => b.turn.usage.totalTokens - a.turn.usage.totalTokens)
-        .slice(0, MAX_INSIGHTS);
+        .slice(0, MAX_HIGHEST_TOKEN_REQUESTS);
 
     if (!candidates.length) return undefined;
 
@@ -79,6 +95,7 @@ const detectCostliestTurns = (sessions: readonly SessionSummary[]): Insight | un
             session: session.project,
             turn: turn.userTurn,
             timestamp: turn.timestamp,
+            activity: toolSummary(turn.tools),
             detail: `${format(turn.usage.totalTokens)} tokens; ${toolSummary(turn.tools)}`,
         })),
         method: "Ranks the highest token total recorded for each request. Repeated token snapshots within one request are not added together.",
@@ -133,7 +150,8 @@ const detectRepeatedToolCalls = (sessions: readonly SessionSummary[]): Insight |
                 events: match.events.map((tool) => ({
                     session: session.project,
                     timestamp: tool.timestamp,
-                    detail: `${tool.name} repeated (same command or file read; contents redacted)`,
+                    activity: describeTool(tool.name),
+                    detail: "Repeated without a detected file edit between attempts.",
                 })),
                 method: "Matches identical failed actions or file reads when the session log does not show a file edit between attempts.",
                 caveat: "Edit detection is conservative; an unrecognized or external edit may not be visible in the log.",
@@ -153,9 +171,8 @@ const detectLargeToolOutputs = (sessions: readonly SessionSummary[]): Insight | 
 
     if (outputs.length < 3) return undefined;
 
-    const top = outputs
-        .sort((a, b) => (b.tool.outputBytes ?? 0) - (a.tool.outputBytes ?? 0))
-        .slice(0, MAX_INSIGHTS);
+    const largestResults = outputs
+        .sort((a, b) => (b.tool.outputBytes ?? 0) - (a.tool.outputBytes ?? 0));
 
     return {
         kind: InsightKind.LargeToolOutputs,
@@ -163,10 +180,11 @@ const detectLargeToolOutputs = (sessions: readonly SessionSummary[]): Insight | 
         title: "Several results were large",
         cause: `${outputs.length} results were at least ${format(LARGE_TOOL_OUTPUT_BYTES)} bytes in the session logs.`,
         action: "If you needed only part of them, next time ask for a file, section, or fewer matches.",
-        events: top.map(({ session, tool }) => ({
+        events: largestResults.map(({ session, tool }) => ({
             session: session.project,
             timestamp: tool.timestamp,
-            detail: `${tool.name} produced about ${format(tool.outputBytes ?? 0)} logged bytes`,
+            activity: describeTool(tool.name),
+            detail: `About ${format(tool.outputBytes ?? 0)} bytes recorded.`,
         })),
         method: `Flags tool results at or above ${format(LARGE_TOOL_OUTPUT_BYTES)} bytes in the session logs.`,
         caveat: "Logged tool-output size is only a proxy for what entered model context, not a token count.",
@@ -191,7 +209,7 @@ const detectCrowdedContext = (sessions: readonly SessionSummary[]): Insight | un
         title: "This conversation is nearly full",
         cause: `${matches.length} recent conversation${matches.length === 1 ? " is" : "s are"} using at least 80% of the model's available context.`,
         action: "Before continuing, save a short handoff and start a new conversation soon.",
-        events: matches.slice(0, MAX_INSIGHTS).map(({ session, used, window }) => ({
+        events: matches.map(({ session, used, window }) => ({
             session: session.project,
             timestamp: session.lastActivity,
             detail: `${format(used)} active input tokens of ${format(window)} (${Math.round((used / window) * 100)}%)`,
@@ -229,7 +247,7 @@ const detectHeavyStartup = (sessions: readonly SessionSummary[]): Insight | unde
                 title: "New conversations use many tokens before work begins",
                 cause: `${heavy.length} of ${starts.length} reviewed conversations in this project began with at least ${format(HEAVY_STARTUP_INPUT_TOKENS)} input tokens.`,
                 action: "If this is unexpected, review the instructions and tools loaded when a conversation starts.",
-                events: heavy.slice(0, MAX_INSIGHTS).map(({ session, turn }) => ({
+                events: heavy.map(({ session, turn }) => ({
                     session: session.project,
                     turn: turn.userTurn,
                     timestamp: turn.timestamp,
@@ -265,4 +283,4 @@ export const findInsights = (sessions: readonly SessionSummary[]): Insight[] =>
         .map((kind) => detectorByKind[kind](sessions))
         .filter((insight): insight is Insight => insight !== undefined)
         .sort((a, b) => b.rank - a.rank)
-        .slice(0, MAX_INSIGHTS);
+        .slice(0, MAX_FINDINGS);

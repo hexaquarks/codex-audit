@@ -5,7 +5,7 @@ A local, read-only CLI for finding actionable token-usage patterns in Codex sess
 ```sh
 npm run build
 node dist/index.js --sessions 5
-node dist/index.js explain 1 --sessions 5
+node dist/index.js open
 ```
 
 It reports the most recently active root sessions and at most three ranked insights:
@@ -17,5 +17,7 @@ It reports the most recently active root sessions and at most three ranked insig
 - consistently heavy first calls across sessions in a repository.
 
 It never prints prompt, command, path, or tool-output content. Cached input is already part of input usage, and cumulative session usage is read from the latest snapshot rather than summed from repeatable per-call events. Logged tool-output bytes are treated only as a context-size proxy.
+
+Each audit saves a privacy-preserving local snapshot. Run `node dist/index.js open` to view the latest snapshot as an expandable browser report. The saved report contains no prompts, commands, paths, or tool-output content.
 
 When run interactively, the CLI uses a short loading indicator and ANSI color to reinforce headings and attention states. Piped output remains plain, and setting `NO_COLOR` disables color.

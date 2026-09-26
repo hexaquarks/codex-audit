@@ -1,5 +1,5 @@
 export const usage = `Usage: codex-audit [--sessions <n>]
-       codex-audit explain <number> [--sessions <n>]
+       codex-audit open
 
 Read local Codex session logs and show rule-based token-usage patterns.
 Prompt, command, path, and tool-output content are never printed.`;
@@ -13,9 +13,7 @@ export type CliCommand =
         sessionLimit: number; // Maximum number of recent root sessions to inspect.
     }
     | {
-        kind: "explain"; // Renders evidence and caveats for one ranked insight.
-        insightNumber: number; // One-based position in the current ranked insight list.
-        sessionLimit: number; // Maximum number of recent root sessions to inspect.
+        kind: "open"; // Opens the most recently saved audit dashboard.
     };
 
 const DEFAULT_SESSION_LIMIT = 5;
@@ -47,18 +45,7 @@ export const parseCommandArguments = (arguments_: readonly string[]): CliCommand
     if (!arguments_.length) return { kind: "report", sessionLimit: DEFAULT_SESSION_LIMIT };
     if (arguments_[0] === "--help" || arguments_[0] === "-h") return { kind: "help" };
 
-    if (arguments_[0] === "explain") {
-        const insightNumber = Number(arguments_[1]);
-        if (!Number.isInteger(insightNumber) || insightNumber < 1) {
-            throw new Error("explain needs a positive insight number");
-        }
-
-        return {
-            kind: "explain",
-            insightNumber,
-            sessionLimit: parseSessionLimit(arguments_.slice(2)),
-        };
-    }
+    if (arguments_[0] === "open" && arguments_.length === 1) return { kind: "open" };
 
     return { kind: "report", sessionLimit: parseSessionLimit(arguments_) };
 };

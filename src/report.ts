@@ -105,47 +105,5 @@ export const createUsageReport = (
         "",
         sectionHeading("Insights", style),
         ...(insightLines.length ? insightLines : [style.success("No clear action found.")]),
-        "",
-        style.dim("Run `codex-audit explain <number>` for matching events and caveats."),
-    ].join("\n");
-};
-
-export const createExplanation = (
-    insights: readonly Insight[],
-    insightNumber: number,
-    style: TerminalStyle = createTerminalStyle(),
-): string => {
-    const insight = insights[insightNumber - 1];
-    if (!insight) {
-        return style.warning(
-            `No insight numbered ${insightNumber}. Run codex-audit first to see the current ranked insights.`,
-        );
-    }
-
-    const matchingEvents = insight.events.map((event) => {
-        const turn = event.turn === undefined ? "" : ` · user turn ${event.turn}`;
-        const time = formatLocalTime(event.timestamp);
-
-        return `  ${style.dim("•")} ${time} · ${event.session}${turn}\n    ${event.detail}`;
-    });
-
-    return [
-        `${sectionHeading(`Insight ${insightNumber}`, style)} ${formatInsightTitle(insight, style)}`,
-        style.dim(`Source: ${sourceSessions(insight) || "unknown session"}`),
-        "",
-        sectionHeading("Why you're seeing this", style),
-        insight.cause,
-        "",
-        sectionHeading("What was found", style),
-        ...matchingEvents,
-        "",
-        sectionHeading("How this was checked", style),
-        insight.method,
-        "",
-        sectionHeading("Keep in mind", style),
-        style.dim(insight.caveat),
-        "",
-        sectionHeading("Possible next step", style),
-        insight.action,
     ].join("\n");
 };
