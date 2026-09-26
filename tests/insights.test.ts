@@ -48,6 +48,7 @@ test("uses active context rather than cumulative session usage for crowded conte
     ]);
 
     assert.equal(insights[0]?.kind, InsightKind.CrowdedContext);
+    assert.equal(insights[0]?.title, "This conversation is nearly full");
     assert.match(insights[0]?.calculation ?? "", /Latest active input context/);
 });
 
@@ -63,6 +64,11 @@ test("flags repeated large tool outputs with a context-size caveat", () => {
         .find((item) => item.kind === InsightKind.LargeToolOutputs);
 
     assert.ok(insight);
+    assert.equal(insight.title, "Several results were large");
+    assert.equal(
+        insight.action,
+        "If you needed only part of them, next time ask for a file, section, or fewer matches.",
+    );
     assert.match(insight.caveat, /proxy/);
 });
 
@@ -78,6 +84,7 @@ test("flags repeated failed commands when no edit separates them", () => {
         .find((item) => item.kind === InsightKind.RepeatedToolCalls);
 
     assert.ok(insight);
+    assert.equal(insight.title, "The same action was repeated without a change");
     assert.match(insight.calculation, /3 identical failed calls/);
 });
 
@@ -111,5 +118,27 @@ test("reports each user turn at most once among the costliest turns", () => {
         .find((item) => item.kind === InsightKind.CostliestTurns);
 
     assert.deepEqual(insight?.events.map((event) => event.turn), [1, 2]);
+    assert.equal(insight?.title, "Highest token use");
     assert.match(insight?.events[0]?.detail ?? "", /25 tokens/);
+});
+
+test("describes high initial token use without claiming a cause", () => {
+    const sessions = [1, 2, 3].map((number) => createSession({
+        sessionId: `session-${number}`,
+        turns: [{
+            timestamp: `2026-01-01T00:00:0${number}Z`,
+            userTurn: 1,
+            usage: createUsage(20_000),
+            tools: [],
+        }],
+    }));
+
+    const insight = findInsights(sessions)
+        .find((item) => item.kind === InsightKind.HeavyStartup);
+
+    assert.equal(insight?.title, "New conversations use many tokens before work begins");
+    assert.equal(
+        insight?.action,
+        "If this is unexpected, review the instructions and tools loaded when a conversation starts.",
+    );
 });

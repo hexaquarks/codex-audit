@@ -71,8 +71,8 @@ const detectCostliestTurns = (sessions: readonly SessionSummary[]): Insight | un
     return {
         kind: InsightKind.CostliestTurns,
         rank: 10,
-        title: "Costliest turns",
-        action: "Use the surrounding tool activity as context before deciding whether the spend was justified.",
+        title: "Highest token use",
+        action: "Use this list to see which requests used the most tokens.",
         events: candidates.map(({ session, turn }) => ({
             session: session.project,
             turn: turn.userTurn,
@@ -125,8 +125,8 @@ const detectRepeatedToolCalls = (sessions: readonly SessionSummary[]): Insight |
             return {
                 kind: InsightKind.RepeatedToolCalls,
                 rank: 100,
-                title: "Stuck in a loop",
-                action: "Change the command or inspect the failure before retrying again.",
+                title: "The same action was repeated without a change",
+                action: "Review the earlier result before trying the same command or reading the same file again.",
                 events: match.events.map((tool) => ({
                     session: session.project,
                     timestamp: tool.timestamp,
@@ -157,8 +157,8 @@ const detectLargeToolOutputs = (sessions: readonly SessionSummary[]): Insight | 
     return {
         kind: InsightKind.LargeToolOutputs,
         rank: 80,
-        title: "Output flood",
-        action: "Use narrower searches, a smaller result limit, or a file range.",
+        title: "Several results were large",
+        action: "If you needed only part of them, next time ask for a file, section, or fewer matches.",
         events: top.map(({ session, tool }) => ({
             session: session.project,
             timestamp: tool.timestamp,
@@ -184,8 +184,8 @@ const detectCrowdedContext = (sessions: readonly SessionSummary[]): Insight | un
     return {
         kind: InsightKind.CrowdedContext,
         rank: 90,
-        title: "Context getting crowded",
-        action: "Wrap up, compact, or start a focused follow-up before more large tool output arrives.",
+        title: "This conversation is nearly full",
+        action: "Before continuing, save a short handoff and start a new conversation soon.",
         events: matches.slice(0, MAX_INSIGHTS).map(({ session, used, window }) => ({
             session: session.project,
             timestamp: session.lastActivity,
@@ -221,8 +221,8 @@ const detectHeavyStartup = (sessions: readonly SessionSummary[]): Insight | unde
             return {
                 kind: InsightKind.HeavyStartup,
                 rank: 50,
-                title: "Heavy startup",
-                action: "Consider inspecting loaded instructions and tool definitions for this repository.",
+                title: "New conversations use many tokens before work begins",
+                action: "If this is unexpected, review the instructions and tools loaded when a conversation starts.",
                 events: heavy.slice(0, MAX_INSIGHTS).map(({ session, turn }) => ({
                     session: session.project,
                     turn: turn.userTurn,
