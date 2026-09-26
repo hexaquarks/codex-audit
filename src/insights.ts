@@ -15,6 +15,9 @@ export interface InsightEvent {
     turn?: number; // User turn when the detector can identify one.
     timestamp: string; // Event timestamp used as supporting evidence.
     activity?: string; // Plain-language category of the activity that produced this event.
+    recordedBytes?: number; // Result size when this event represents tool output.
+    recordedTokens?: number; // Token total when this event represents a model request.
+    contextWindowTokens?: number; // Model context capacity when this event represents context use.
     detail: string; // Privacy-preserving description of the matching event.
 }
 
@@ -96,6 +99,7 @@ const detectCostliestTurns = (sessions: readonly SessionSummary[]): Insight | un
             turn: turn.userTurn,
             timestamp: turn.timestamp,
             activity: toolSummary(turn.tools),
+            recordedTokens: turn.usage.totalTokens,
             detail: `${format(turn.usage.totalTokens)} tokens; ${toolSummary(turn.tools)}`,
         })),
         method: "Ranks the highest token total recorded for each request. Repeated token snapshots within one request are not added together.",
@@ -183,8 +187,9 @@ const detectLargeToolOutputs = (sessions: readonly SessionSummary[]): Insight | 
         events: largestResults.map(({ session, tool }) => ({
             session: session.project,
             timestamp: tool.timestamp,
-            activity: describeTool(tool.name),
-            detail: `About ${format(tool.outputBytes ?? 0)} bytes recorded.`,
+                    activity: describeTool(tool.name),
+                    recordedBytes: tool.outputBytes,
+                    detail: `About ${format(tool.outputBytes ?? 0)} bytes recorded.`,
         })),
         method: `Flags tool results at or above ${format(LARGE_TOOL_OUTPUT_BYTES)} bytes in the session logs.`,
         caveat: "Logged tool-output size is only a proxy for what entered model context, not a token count.",
@@ -212,6 +217,8 @@ const detectCrowdedContext = (sessions: readonly SessionSummary[]): Insight | un
         events: matches.map(({ session, used, window }) => ({
             session: session.project,
             timestamp: session.lastActivity,
+            recordedTokens: used,
+            contextWindowTokens: window,
             detail: `${format(used)} active input tokens of ${format(window)} (${Math.round((used / window) * 100)}%)`,
         })),
         method: "Compares the latest active input context with the model's logged context window. The warning threshold is approximately 80%.",
@@ -251,6 +258,7 @@ const detectHeavyStartup = (sessions: readonly SessionSummary[]): Insight | unde
                     session: session.project,
                     turn: turn.userTurn,
                     timestamp: turn.timestamp,
+                    recordedTokens: turn.usage.inputTokens,
                     detail: `${format(turn.usage.inputTokens)} input tokens on the first logged call`,
                 })),
                 method: `Requires at least ${MIN_HEAVY_STARTUP_SESSIONS} conversations in one project, with at least ${Math.round(HEAVY_STARTUP_RATIO * 100)}% beginning above ${format(HEAVY_STARTUP_INPUT_TOKENS)} input tokens.`,

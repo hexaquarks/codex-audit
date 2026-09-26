@@ -2,25 +2,21 @@ import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { Insight } from "./insights.js";
+import { InsightKind, type Insight, type InsightEvent } from "./insights.js";
 import type { AuditSnapshot, SavedSession } from "./snapshot.js";
 
 const DASHBOARD_FILE = path.join(os.homedir(), ".codex-audit", "latest.html");
-
-const formatNumber = (value: number): string => new Intl.NumberFormat("en-US").format(value);
+const number = new Intl.NumberFormat("en-US");
 
 const formatTime = (timestamp: string): string => {
     const date = new Date(timestamp);
     if (Number.isNaN(date.getTime())) return "Unknown time";
-
-    return new Intl.DateTimeFormat(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    }).format(date);
+    return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
 };
+
+const formatSize = (value: number): string => value < 1_000
+    ? `${number.format(value)} bytes`
+    : `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)} KB`;
 
 const escapeHtml = (value: string): string => value
     .replaceAll("&", "&amp;")
@@ -29,70 +25,101 @@ const escapeHtml = (value: string): string => value
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
-const formatEvents = (insight: Insight): string => insight.events.map((event) => {
-    const heading = `${formatTime(event.timestamp)} · ${event.session}`;
-    const detail = event.activity === undefined ? event.detail : `${event.activity}: ${event.detail}`;
+const totalBytes = (events: InsightEvent[]): number =>
+    events.reduce((total, event) => total + (event.recordedBytes ?? 0), 0);
 
-    return `<article class="event">
-  <p class="event-heading">${escapeHtml(heading)}</p>
-  <p class="event-detail">${escapeHtml(detail)}</p>
-</article>`;
-}).join("\n");
+const insightSubtitle = (insight: Insight): string => {
+    if (insight.kind === InsightKind.LargeToolOutputs) {
+        return `${insight.events.length} results · ${formatSize(totalBytes(insight.events))}`;
+    }
+    if (insight.kind === InsightKind.CrowdedContext) return `${insight.events.length} conversations near their limit`;
+    if (insight.kind === InsightKind.HeavyStartup) return `${insight.events.length} conversations affected`;
+    if (insight.kind === InsightKind.RepeatedToolCalls) return `${insight.events.length} matching attempts`;
+    return `${insight.events.length} highest-use requests`;
+};
 
-const formatInsight = (insight: Insight, index: number): string => `<details class="insight">
-  <summary>
-    <span class="insight-number">${String(index + 1).padStart(2, "0")}</span>
-    <span><strong>${escapeHtml(insight.title)}</strong><small>${escapeHtml(insight.cause)}</small></span>
-  </summary>
-  <div class="insight-details">
-    <section><h3>What was found</h3><div class="event-list">${formatEvents(insight)}</div></section>
-    <section class="muted-section"><h3>How this was checked</h3><p>${escapeHtml(insight.method)}</p></section>
-    <section class="muted-section"><h3>Keep in mind</h3><p>${escapeHtml(insight.caveat)}</p></section>
-    <section class="next-step"><h3>Possible next step</h3><p>${escapeHtml(insight.action)}</p></section>
-  </div>
+const formatFinding = (insight: Insight, index: number): string => `<button class="finding" data-finding="${index}" type="button">
+  <span class="finding-dot"></span>
+  <span><strong>${escapeHtml(insight.title)}</strong><small>${escapeHtml(insightSubtitle(insight))}</small></span>
+</button>`;
+
+const formatKpi = (label: string, value: string): string => `<div class="kpi"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+
+const activityGroups = (events: InsightEvent[]): { activity: string; count: number; bytes: number }[] => {
+    const groups = new Map<string, { count: number; bytes: number }>();
+    for (const event of events) {
+        const activity = event.activity ?? "Other activity";
+        const existing = groups.get(activity) ?? { count: 0, bytes: 0 };
+        existing.count += 1;
+        existing.bytes += event.recordedBytes ?? 0;
+        groups.set(activity, existing);
+    }
+    return [...groups].map(([activity, group]) => ({ activity, ...group }))
+        .sort((left, right) => right.bytes - left.bytes || right.count - left.count);
+};
+
+const formatOccurrences = (events: InsightEvent[]): string => `<details class="occurrences">
+  <summary>View ${events.length} matching result${events.length === 1 ? "" : "s"}</summary>
+  <ol>${events.map((event) => `<li><span>${escapeHtml(event.activity ?? "Activity")}</span><strong>${escapeHtml(event.detail)}</strong><time>${escapeHtml(formatTime(event.timestamp))} · ${escapeHtml(event.session)}</time></li>`).join("")}</ol>
 </details>`;
 
-const formatSession = (session: SavedSession): string => {
-    const context = session.activeContextTokens && session.contextWindowTokens
-        ? `${Math.round((session.activeContextTokens / session.contextWindowTokens) * 100)}%`
-        : "—";
+const formatLargeResultEvidence = (insight: Insight): string => {
+    const groups = activityGroups(insight.events);
+    const bytes = totalBytes(insight.events);
+    const largest = Math.max(...insight.events.map((event) => event.recordedBytes ?? 0));
+    const lead = groups[0];
+    const leadSentence = lead && bytes > 0
+        ? `${lead.activity} produced ${lead.count} of ${insight.events.length} results and ${Math.round((lead.bytes / bytes) * 100)}% of the recorded size.`
+        : "These results account for a meaningful share of the recorded activity.";
 
-    return `<tr><td>${escapeHtml(formatTime(session.lastActivity))}</td><td>${escapeHtml(session.project)}</td><td class="number">${formatNumber(session.totalTokens)}</td><td class="number">${context}</td></tr>`;
+    return `<div class="kpis">${formatKpi("Large results", String(insight.events.length))}${formatKpi("Recorded size", formatSize(bytes))}${formatKpi("Largest result", formatSize(largest))}</div>
+<section class="evidence"><h2>Where the size came from</h2><p class="lead">${escapeHtml(leadSentence)}</p>
+<div class="breakdown">${groups.map((group) => `<div class="breakdown-row"><span>${escapeHtml(group.activity)}</span><span class="bar"><i style="width:${bytes ? (group.bytes / bytes) * 100 : 0}%"></i></span><strong>${group.count} results</strong><em>${formatSize(group.bytes)}</em></div>`).join("")}</div>
+${formatOccurrences(insight.events)}</section>`;
 };
 
-const dashboardStyles = `
-:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #10131a; color: #eef2f7; }
-* { box-sizing: border-box; } body { margin: 0; background: radial-gradient(circle at 15% 0%, #1c2b3a, #10131a 42rem); }
-main { width: min(980px, calc(100% - 48px)); margin: 0 auto; padding: 56px 0 72px; }
-.eyebrow, h3 { color: #7dd3fc; font-size: .72rem; font-weight: 750; letter-spacing: .12em; margin: 0 0 .55rem; text-transform: uppercase; }
-header { display: flex; justify-content: space-between; gap: 2rem; align-items: end; margin-bottom: 32px; } h1 { font-size: clamp(2rem, 5vw, 3.8rem); letter-spacing: -.05em; line-height: .95; margin: 0; }
-.subtitle, .generated-at, .muted-section { color: #aab5c5; } .subtitle { margin: .8rem 0 0; max-width: 40rem; }
-.summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 36px; }
-.metric, .panel, .insight { background: rgba(22, 28, 39, .86); border: 1px solid #293448; border-radius: 14px; } .metric { padding: 18px; }
-.metric strong { display: block; font-size: 1.6rem; letter-spacing: -.04em; margin-bottom: 4px; } .metric span { color: #aab5c5; font-size: .88rem; }
-.panel { overflow: hidden; } .panel-heading { padding: 20px 20px 12px; } .panel-heading h2 { font-size: 1rem; margin: 0; }
-.insight-list { display: grid; gap: 12px; margin-top: 16px; } .insight { overflow: hidden; }
-.insight summary { cursor: pointer; display: flex; gap: 14px; list-style: none; padding: 18px 20px; } .insight summary::-webkit-details-marker { display: none; } .insight summary::after { color: #7dd3fc; content: "›"; font-size: 1.4rem; margin-left: auto; transform: rotate(0deg); transition: transform .15s ease; } .insight[open] summary::after { transform: rotate(90deg); } .insight summary:hover { background: #202d3e; } .insight summary:focus-visible { outline: 3px solid #7dd3fc; outline-offset: -3px; }
-.insight-number { color: #7dd3fc; font: 700 .72rem ui-monospace, monospace; padding-top: 3px; } .insight summary span:last-child { display: grid; gap: 5px; } .insight summary small { color: #aab5c5; line-height: 1.4; }
-.insight-details { border-top: 1px solid #293448; padding: 0 20px 22px; } .insight-details section { border-top: 1px solid #293448; padding-top: 20px; margin-top: 20px; } .insight-details section:first-child { border-top: 0; } .insight-details p { line-height: 1.55; margin: 0; }
-.event-list { display: grid; gap: 10px; } .event { background: #10151f; border: 1px solid #293448; border-radius: 8px; padding: 12px 14px; } .event-heading { color: #c8d3e2; font-size: .88rem; font-weight: 650; margin: 0; } .event-detail { color: #aab5c5; font-size: .9rem; margin: 3px 0 0 !important; }
-.next-step { border-color: #335875 !important; } .sessions { margin-top: 16px; padding: 8px 20px 20px; } table { border-collapse: collapse; width: 100%; } th, td { border-bottom: 1px solid #293448; padding: 12px 0; text-align: left; } th { color: #aab5c5; font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; } .number { text-align: right; font-variant-numeric: tabular-nums; } footer { color: #8090a4; font-size: .82rem; margin-top: 22px; }
-@media (max-width: 760px) { main { width: min(100% - 28px, 980px); padding-top: 32px; } header { display: block; } .generated-at { margin-top: 1rem; } .summary { grid-template-columns: 1fr; } }
+const formatRankedEvidence = (insight: Insight): string => `<section class="evidence"><h2>What was found</h2><ol class="ranked-events">${insight.events.map((event) => {
+    const metric = event.recordedTokens === undefined ? event.detail : `${number.format(event.recordedTokens)} tokens`;
+    return `<li><span>${escapeHtml(event.activity ?? event.session)}</span><strong>${escapeHtml(metric)}</strong><time>${escapeHtml(formatTime(event.timestamp))} · ${escapeHtml(event.session)}</time></li>`;
+}).join("")}</ol></section>`;
+
+const formatContextEvidence = (insight: Insight): string => `<section class="evidence"><h2>Conversations closest to the limit</h2><ol class="ranked-events">${insight.events.map((event) => {
+    const used = event.recordedTokens ?? 0;
+    const limit = event.contextWindowTokens ?? 1;
+    return `<li><span>${escapeHtml(event.session)}</span><strong>${Math.round((used / limit) * 100)}% full</strong><time>${number.format(used)} of ${number.format(limit)} tokens</time></li>`;
+}).join("")}</ol></section>`;
+
+const formatDetail = (insight: Insight, index: number): string => {
+    const evidence = insight.kind === InsightKind.LargeToolOutputs
+        ? formatLargeResultEvidence(insight)
+        : insight.kind === InsightKind.CrowdedContext
+            ? formatContextEvidence(insight)
+            : formatRankedEvidence(insight);
+
+    return `<article class="detail" data-detail="${index}"${index ? " hidden" : ""}>
+  <p class="breadcrumb">Findings <span>/</span> ${escapeHtml(insight.title)}</p>
+  <h1>${escapeHtml(insight.title)}</h1><p class="conclusion">${escapeHtml(insight.cause)}</p>
+  ${evidence}
+  <section class="change"><h2>What to change</h2><p>${escapeHtml(insight.action)}</p></section>
+  <details class="method"><summary>How this was calculated</summary><p>${escapeHtml(insight.method)}</p><p>${escapeHtml(insight.caveat)}</p></details>
+</article>`;
+};
+
+const formatSession = (session: SavedSession): string => `<tr><td>${escapeHtml(formatTime(session.lastActivity))}</td><td>${escapeHtml(session.project)}</td><td>${number.format(session.totalTokens)}</td></tr>`;
+
+const styles = `
+:root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:#111827;color:#edf2f7}*{box-sizing:border-box}body{margin:0;background:#111827}main{max-width:1440px;margin:auto;padding:32px}.app{display:grid;grid-template-columns:320px minmax(0,1fr);min-height:720px;border:1px solid #273449;border-radius:12px;overflow:hidden;background:#151d2b}.sidebar{border-right:1px solid #273449;padding:20px 12px}.eyebrow,.breadcrumb{color:#8ca0bd;font-size:12px;margin:0 0 8px}.sidebar h1{font-size:22px;letter-spacing:-.03em;margin:0}.saved{color:#8ca0bd;font-size:12px;margin:8px 0 24px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:28px}.metric{background:#1c2738;border:1px solid #2b3a51;border-radius:7px;padding:10px 8px}.metric strong{display:block;font-size:15px}.metric span{color:#8ca0bd;font-size:10px}.section-label{color:#8ca0bd;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:0 8px 8px}.finding{width:100%;border:0;border-radius:7px;background:transparent;color:inherit;cursor:pointer;display:flex;gap:10px;padding:12px 10px;text-align:left}.finding:hover,.finding.selected{background:#263752}.finding:focus-visible{outline:2px solid #7dd3fc;outline-offset:2px}.finding-dot{background:#fbbf24;border-radius:99px;height:7px;margin-top:6px;width:7px}.finding span:last-child{display:grid;gap:4px}.finding strong{font-size:13px;line-height:1.25}.finding small{color:#aab7ca;font-size:11px}.detail-pane{padding:52px 56px;min-width:0}.detail{max-width:850px}.breadcrumb span{margin:0 6px}.detail h1{font-size:32px;letter-spacing:-.04em;margin:0}.conclusion{color:#cbd5e1;font-size:17px;line-height:1.5;margin:12px 0 28px}.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:28px}.kpi{border-left:2px solid #497ca7;padding:8px 12px}.kpi span{color:#8ca0bd;display:block;font-size:12px}.kpi strong{font-size:18px}.evidence,.change,.method{border-top:1px solid #2b3a51;margin-top:28px;padding:24px 0 0}.evidence h2,.change h2{font-size:14px;margin:0 0 8px}.lead{color:#aab7ca;line-height:1.5;margin:0 0 18px}.breakdown{display:grid;gap:10px;margin-left:16px}.breakdown-row{display:grid;grid-template-columns:150px minmax(50px,1fr) 74px 75px;align-items:center;gap:10px;font-size:13px}.bar{background:#253247;border-radius:99px;height:6px;overflow:hidden}.bar i{background:#54b4e9;display:block;height:100%}.breakdown-row strong,.breakdown-row em{font-size:12px;font-style:normal;text-align:right}.breakdown-row em{color:#8ca0bd}.occurrences{margin:22px 0 0 16px}.occurrences summary,.method summary{color:#8dc8eb;cursor:pointer;font-size:13px}.occurrences ol,.ranked-events{border-left:1px solid #32435c;display:grid;gap:10px;margin:16px 0 0 8px;padding-left:22px}.occurrences li,.ranked-events li{display:grid;gap:3px;padding-left:2px}.occurrences li span,.ranked-events li span{font-size:13px}.occurrences li strong,.ranked-events li strong{font-size:12px;font-weight:500}.occurrences time,.ranked-events time{color:#8ca0bd;font-size:11px}.change{border-left:2px solid #54b4e9;padding-left:16px}.change p,.method p{color:#cbd5e1;line-height:1.5}.method{margin-left:16px}.sessions{margin-top:32px;width:100%;border-collapse:collapse}.sessions th,.sessions td{border-bottom:1px solid #2b3a51;padding:10px 0;text-align:left}.sessions th{color:#8ca0bd;font-size:11px}.privacy{color:#8ca0bd;font-size:11px;margin:28px 0 0}@media(max-width:850px){main{padding:0}.app{border:0;border-radius:0;display:block}.sidebar{border-bottom:1px solid #273449;border-right:0}.detail-pane{padding:32px 22px}.breakdown-row{grid-template-columns:110px minmax(30px,1fr) 55px 60px}.kpis{grid-template-columns:1fr}}
 `;
 
-export const createDashboardDocument = (snapshot: AuditSnapshot): string => `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Codex audit</title><style>${dashboardStyles}</style></head>
-<body><main><header><div><p class="eyebrow">Saved only on this computer</p><h1>Codex audit</h1><p class="subtitle">A closer look at recent conversation patterns and the evidence behind them.</p></div><p class="generated-at">Saved ${escapeHtml(formatTime(snapshot.generatedAt))}</p></header>
-<section class="summary" aria-label="Audit summary"><article class="metric"><strong>${snapshot.sessions.length}</strong><span>recent conversations</span></article><article class="metric"><strong>${formatNumber(snapshot.totals.totalTokens)}</strong><span>tokens recorded</span></article><article class="metric"><strong>${snapshot.insights.length}</strong><span>findings</span></article></section>
-<section class="panel"><div class="panel-heading"><p class="eyebrow">What stood out</p><h2>Open a finding to see the activity that led to it.</h2></div></section><section class="insight-list">${snapshot.insights.map(formatInsight).join("\n")}</section>
-<section class="panel sessions"><div class="panel-heading"><p class="eyebrow">Recent activity</p><h2>Conversations included in this report</h2></div><table><thead><tr><th>Time</th><th>Project</th><th class="number">Tokens</th><th class="number">Context</th></tr></thead><tbody>${snapshot.sessions.map(formatSession).join("\n")}</tbody></table></section>
-<footer>Saved only on this computer. This report does not include prompts, commands, file paths, or result contents.</footer></main></body></html>`;
+const selectionScript = `<script>const buttons=document.querySelectorAll('.finding');const details=document.querySelectorAll('.detail');buttons.forEach(button=>button.addEventListener('click',()=>{const index=button.dataset.finding;buttons.forEach(item=>item.classList.toggle('selected',item===button));details.forEach(detail=>detail.hidden=detail.dataset.detail!==index)}));buttons[0]?.classList.add('selected');</script>`;
 
-const browserLaunch = (file: string): { command: string; arguments_: string[] } => {
-    if (process.platform === "darwin") return { command: "open", arguments_: [file] };
-    if (process.platform === "win32") return { command: "cmd", arguments_: ["/c", "start", "", file] };
-    return { command: "xdg-open", arguments_: [file] };
-};
+export const createDashboardDocument = (snapshot: AuditSnapshot): string => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Codex audit</title><style>${styles}</style></head><body><main><div class="app"><aside class="sidebar"><p class="eyebrow">SAVED ONLY ON THIS COMPUTER</p><h1>Codex audit</h1><p class="saved">Saved ${escapeHtml(formatTime(snapshot.generatedAt))}</p><div class="metrics">${formatKpi("Conversations",String(snapshot.sessions.length))}${formatKpi("Tokens",number.format(snapshot.totals.totalTokens))}${formatKpi("Findings",String(snapshot.insights.length))}</div><p class="section-label">Findings</p>${snapshot.insights.map(formatFinding).join("")}</aside><section class="detail-pane">${snapshot.insights.map(formatDetail).join("")}</section></div><table class="sessions"><thead><tr><th>Recent conversations</th><th>Project</th><th>Tokens</th></tr></thead><tbody>${snapshot.sessions.map(formatSession).join("")}</tbody></table><p class="privacy">This report does not include prompts, commands, file paths, or result contents.</p></main>${selectionScript}</body></html>`;
+
+const browserLaunch = (file: string): { command: string; arguments_: string[] } => process.platform === "darwin"
+    ? { command: "open", arguments_: [file] }
+    : process.platform === "win32"
+        ? { command: "cmd", arguments_: ["/c", "start", "", file] }
+        : { command: "xdg-open", arguments_: [file] };
 
 const launchBrowser = (file: string): Promise<void> => new Promise((resolve, reject) => {
     const { command, arguments_ } = browserLaunch(file);
