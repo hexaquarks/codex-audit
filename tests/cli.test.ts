@@ -16,3 +16,7 @@ test("uses the requested session limit", () => {
 test("rejects an invalid session limit", () => {
     assert.throws(() => parseCommandArguments(["--limit", "0"]), /positive integer/);
 });
+
+test("rejects a session option without a value", () => {
+    assert.throws(() => parseCommandArguments(["--sessions"]), /needs a positive integer/);
+});

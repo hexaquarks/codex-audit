@@ -1,36 +1,64 @@
-export const usage = `Usage: codex-audit [--limit <n>]
+export const usage = `Usage: codex-audit [--sessions <n>]
+       codex-audit explain <number> [--sessions <n>]
 
-Show token usage from recent local Codex sessions.
-Prompt and command content are never printed.`;
+Read local Codex session logs and show rule-based token-usage patterns.
+Prompt, command, path, and tool-output content are never printed.`;
+
+export type CliCommand =
+    | {
+        kind: "help"; // Prints command usage without reading session logs.
+    }
+    | {
+        kind: "report"; // Renders the standard session summary and insight list.
+        sessionLimit: number; // Maximum number of recent root sessions to inspect.
+    }
+    | {
+        kind: "explain"; // Renders evidence and caveats for one ranked insight.
+        insightNumber: number; // One-based position in the current ranked insight list.
+        sessionLimit: number; // Maximum number of recent root sessions to inspect.
+    };
 
 const DEFAULT_SESSION_LIMIT = 5;
 
-export type CliCommand =
-    | { kind: "help" }
-    | { kind: "report"; sessionLimit: number };
-
-export const parseCommandArguments = (arguments_: readonly string[]): CliCommand => {
+const parseSessionLimit = (arguments_: readonly string[]): number => {
     let sessionLimit = DEFAULT_SESSION_LIMIT;
 
     for (let index = 0; index < arguments_.length; index += 1) {
-        const argument = arguments_[index];
-
-        if (argument === "--help" || argument === "-h") return { kind: "help" };
-        if (argument === "--limit") {
-            const limitArgument = arguments_[index + 1];
-            if (limitArgument === undefined) throw new Error("--limit needs a positive integer");
-
-            sessionLimit = Number(limitArgument);
-            index += 1;
-            continue;
+        const option = arguments_[index];
+        if (option !== "--sessions" && option !== "--limit") {
+            throw new Error(`Unknown argument: ${option}`);
         }
 
-        throw new Error(`Unknown argument: ${argument}`);
+        const value = arguments_[index + 1];
+        if (value === undefined) throw new Error(`${option} needs a positive integer`);
+
+        sessionLimit = Number(value);
+        index += 1;
     }
 
     if (!Number.isInteger(sessionLimit) || sessionLimit < 1) {
-        throw new Error("--limit must be a positive integer");
+        throw new Error("--sessions must be a positive integer");
     }
 
-    return { kind: "report", sessionLimit };
+    return sessionLimit;
+};
+
+export const parseCommandArguments = (arguments_: readonly string[]): CliCommand => {
+    if (!arguments_.length) return { kind: "report", sessionLimit: DEFAULT_SESSION_LIMIT };
+    if (arguments_[0] === "--help" || arguments_[0] === "-h") return { kind: "help" };
+
+    if (arguments_[0] === "explain") {
+        const insightNumber = Number(arguments_[1]);
+        if (!Number.isInteger(insightNumber) || insightNumber < 1) {
+            throw new Error("explain needs a positive insight number");
+        }
+
+        return {
+            kind: "explain",
+            insightNumber,
+            sessionLimit: parseSessionLimit(arguments_.slice(2)),
+        };
+    }
+
+    return { kind: "report", sessionLimit: parseSessionLimit(arguments_) };
 };

@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { readSessionSummaries, type SessionSummary } from "./audit.js";
 import { parseCommandArguments, usage } from "./cli.js";
-import { createUsageReport } from "./report.js";
+import { findInsights } from "./insights.js";
+import { createExplanation, createUsageReport } from "./report.js";
 
 const main = async (): Promise<void> => {
     const commandLineArguments: readonly string[] = process.argv.slice(2);
@@ -15,6 +16,11 @@ const main = async (): Promise<void> => {
 
     const sessionsDirectoryPath: string = path.join(os.homedir(), ".codex", "sessions");
     const sessionSummaries: readonly SessionSummary[] = await readSessionSummaries(sessionsDirectoryPath);
+    if (command.kind === "explain") {
+        const selectedSessions = sessionSummaries.slice(0, command.sessionLimit);
+        console.log(createExplanation(findInsights(selectedSessions), command.insightNumber));
+        return;
+    }
     console.log(createUsageReport(sessionSummaries, command.sessionLimit));
 };
 
