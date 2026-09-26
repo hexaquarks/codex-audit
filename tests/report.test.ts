@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createUsageReport } from "../src/report.js";
+import { createTerminalStyle } from "../src/terminal.js";
 import type { SessionSummary } from "../src/audit.js";
 
 const session = (project: string, totalTokens: number): SessionSummary => ({
@@ -25,7 +26,8 @@ const session = (project: string, totalTokens: number): SessionSummary => ({
 test("renders only the requested number of recent sessions", () => {
     const report = createUsageReport([session("first-project", 1_000_000), session("second-project", 2_000_000)], 1);
 
-    assert.match(report, /1 most recently active sessions · 1,000,000 cumulative tokens/);
+    assert.match(report, /1,000,000 cumulative tokens across 1 recent root sessions/);
+    assert.match(report, /RECENT SESSIONS · LOCAL TIME/);
     assert.match(report, /first-project/);
     assert.doesNotMatch(report, /second-project/);
 });
@@ -44,5 +46,15 @@ test("labels a session-derived insight with its source session", () => {
         })),
     };
 
-    assert.match(createUsageReport([outputFloodSession], 1), /Output flood \[investigation-repo\]/);
+    const report = createUsageReport([outputFloodSession], 1);
+
+    assert.match(report, /OUTPUT FLOOD  from investigation-repo/);
+});
+
+test("uses ANSI styling only when the terminal style enables it", () => {
+    const plainReport = createUsageReport([session("demo", 1_000)], 1, createTerminalStyle(false));
+    const coloredReport = createUsageReport([session("demo", 1_000)], 1, createTerminalStyle(true));
+
+    assert.doesNotMatch(plainReport, /\u001B\[/);
+    assert.match(coloredReport, /\u001B\[/);
 });

@@ -5,9 +5,10 @@ import { readSessionSummaries, type SessionSummary } from "./audit.js";
 import { parseCommandArguments, usage } from "./cli.js";
 import { findInsights } from "./insights.js";
 import { createExplanation, createUsageReport } from "./report.js";
+import { startLoadingIndicator } from "./terminal.js";
 
 const main = async (): Promise<void> => {
-    const commandLineArguments: readonly string[] = process.argv.slice(2);
+    const commandLineArguments: string[] = process.argv.slice(2);
     const command = parseCommandArguments(commandLineArguments);
     if (command.kind === "help") {
         console.log(usage);
@@ -15,7 +16,15 @@ const main = async (): Promise<void> => {
     }
 
     const sessionsDirectoryPath: string = path.join(os.homedir(), ".codex", "sessions");
-    const sessionSummaries: readonly SessionSummary[] = await readSessionSummaries(sessionsDirectoryPath);
+    const loadingIndicator = startLoadingIndicator("Reading local Codex sessions…");
+    let sessionSummaries: SessionSummary[];
+
+    try {
+        sessionSummaries = await readSessionSummaries(sessionsDirectoryPath);
+    } finally {
+        loadingIndicator.stop();
+    }
+
     if (command.kind === "explain") {
         const selectedSessions = sessionSummaries.slice(0, command.sessionLimit);
         console.log(createExplanation(findInsights(selectedSessions), command.insightNumber));

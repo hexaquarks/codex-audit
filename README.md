@@ -17,3 +17,5 @@ It reports the most recently active root sessions and at most three ranked insig
 - consistently heavy first calls across sessions in a repository.
 
 It never prints prompt, command, path, or tool-output content. Cached input is already part of input usage, and cumulative session usage is read from the latest snapshot rather than summed from repeatable per-call events. Logged tool-output bytes are treated only as a context-size proxy.
+
+When run interactively, the CLI uses a short loading indicator and ANSI color to reinforce headings and attention states. Piped output remains plain, and setting `NO_COLOR` disables color.
