@@ -49,7 +49,8 @@ test("uses active context rather than cumulative session usage for crowded conte
 
     assert.equal(insights[0]?.kind, InsightKind.CrowdedContext);
     assert.equal(insights[0]?.title, "This conversation is nearly full");
-    assert.match(insights[0]?.calculation ?? "", /Latest active input context/);
+    assert.match(insights[0]?.cause ?? "", /at least 80%/);
+    assert.match(insights[0]?.method ?? "", /active input context/);
 });
 
 test("flags repeated large tool outputs with a context-size caveat", () => {
@@ -85,7 +86,7 @@ test("flags repeated failed commands when no edit separates them", () => {
 
     assert.ok(insight);
     assert.equal(insight.title, "The same action was repeated without a change");
-    assert.match(insight.calculation, /3 identical failed calls/);
+    assert.match(insight.cause, /3 identical failed actions or file reads/);
 });
 
 test("does not flag repeated calls when a file edit separates them", () => {
@@ -122,7 +123,7 @@ test("reports each user turn at most once among the costliest turns", () => {
     assert.match(insight?.events[0]?.detail ?? "", /25 tokens/);
 });
 
-test("describes high initial token use without claiming a cause", () => {
+test("describes high initial token use with a plain-language cause", () => {
     const sessions = [1, 2, 3].map((number) => createSession({
         sessionId: `session-${number}`,
         turns: [{

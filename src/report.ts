@@ -74,7 +74,8 @@ const formatInsight = (insight: Insight, index: number, style: TerminalStyle): s
 
     return [
         `${style.strong(`${index + 1}.`)} ${formatInsightTitle(insight, style)}${sourceLabel}`,
-        `   ${style.dim("→")} ${insight.action}`,
+        `   ${style.dim("Why:")} ${insight.cause}`,
+        `   ${style.dim("Possible next step:")} ${insight.action}`,
     ];
 };
 
@@ -132,16 +133,19 @@ export const createExplanation = (
         `${sectionHeading(`Insight ${insightNumber}`, style)} ${formatInsightTitle(insight, style)}`,
         style.dim(`Source: ${sourceSessions(insight) || "unknown session"}`),
         "",
-        sectionHeading("Matching events", style),
+        sectionHeading("Why you're seeing this", style),
+        insight.cause,
+        "",
+        sectionHeading("What was found", style),
         ...matchingEvents,
         "",
-        sectionHeading("Why it matched", style),
-        insight.calculation,
+        sectionHeading("How this was checked", style),
+        insight.method,
         "",
-        sectionHeading("Recommended action", style),
-        insight.action,
-        "",
-        sectionHeading("Caveat", style),
+        sectionHeading("Keep in mind", style),
         style.dim(insight.caveat),
+        "",
+        sectionHeading("Possible next step", style),
+        insight.action,
     ].join("\n");
 };

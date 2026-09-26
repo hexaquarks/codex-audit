@@ -21,9 +21,10 @@ export interface Insight {
     kind: InsightKind; // Stable detector identity.
     rank: number; // Relative priority used to order the report.
     title: string; // Short presentation heading.
+    cause: string; // Plain-language reason this finding appeared.
     action: string; // One-line recommended next action.
     events: InsightEvent[]; // Evidence that caused the detector to match.
-    calculation: string; // Rule and threshold used by the detector.
+    method: string; // Rule and threshold used to generate the finding.
     caveat: string; // Limitations of the signal.
 }
 
@@ -72,6 +73,7 @@ const detectCostliestTurns = (sessions: readonly SessionSummary[]): Insight | un
         kind: InsightKind.CostliestTurns,
         rank: 10,
         title: "Highest token use",
+        cause: "These requests used more tokens than the other requests in the sessions reviewed.",
         action: "Use this list to see which requests used the most tokens.",
         events: candidates.map(({ session, turn }) => ({
             session: session.project,
@@ -79,7 +81,7 @@ const detectCostliestTurns = (sessions: readonly SessionSummary[]): Insight | un
             timestamp: turn.timestamp,
             detail: `${format(turn.usage.totalTokens)} tokens; ${toolSummary(turn.tools)}`,
         })),
-        calculation: "Ranks the highest per-call last_token_usage.total_tokens for each user turn; it does not sum repeating token-count events.",
+        method: "Ranks the highest token total recorded for each request. Repeated token snapshots within one request are not added together.",
         caveat: "A costly turn is investigation context, not a warning, and does not prove the tools caused the token use.",
     };
 };
@@ -126,13 +128,14 @@ const detectRepeatedToolCalls = (sessions: readonly SessionSummary[]): Insight |
                 kind: InsightKind.RepeatedToolCalls,
                 rank: 100,
                 title: "The same action was repeated without a change",
+                cause: `${match.events.length} identical failed actions or file reads were logged without a detected file edit between them.`,
                 action: "Review the earlier result before trying the same command or reading the same file again.",
                 events: match.events.map((tool) => ({
                     session: session.project,
                     timestamp: tool.timestamp,
                     detail: `${tool.name} repeated (same command or file read; contents redacted)`,
                 })),
-                calculation: `${match.events.length} identical failed calls or file reads with no logged edit between attempts.`,
+                method: "Matches identical failed actions or file reads when the session log does not show a file edit between attempts.",
                 caveat: "Edit detection is conservative; an unrecognized or external edit may not be visible in the log.",
             };
         }
@@ -158,13 +161,14 @@ const detectLargeToolOutputs = (sessions: readonly SessionSummary[]): Insight | 
         kind: InsightKind.LargeToolOutputs,
         rank: 80,
         title: "Several results were large",
+        cause: `${outputs.length} results were at least ${format(LARGE_TOOL_OUTPUT_BYTES)} bytes in the session logs.`,
         action: "If you needed only part of them, next time ask for a file, section, or fewer matches.",
         events: top.map(({ session, tool }) => ({
             session: session.project,
             timestamp: tool.timestamp,
             detail: `${tool.name} produced about ${format(tool.outputBytes ?? 0)} logged bytes`,
         })),
-        calculation: `${outputs.length} tool results were at least ${format(LARGE_TOOL_OUTPUT_BYTES)} logged bytes.`,
+        method: `Flags tool results at or above ${format(LARGE_TOOL_OUTPUT_BYTES)} bytes in the session logs.`,
         caveat: "Logged tool-output size is only a proxy for what entered model context, not a token count.",
     };
 };
@@ -185,13 +189,14 @@ const detectCrowdedContext = (sessions: readonly SessionSummary[]): Insight | un
         kind: InsightKind.CrowdedContext,
         rank: 90,
         title: "This conversation is nearly full",
+        cause: `${matches.length} recent conversation${matches.length === 1 ? " is" : "s are"} using at least 80% of the model's available context.`,
         action: "Before continuing, save a short handoff and start a new conversation soon.",
         events: matches.slice(0, MAX_INSIGHTS).map(({ session, used, window }) => ({
             session: session.project,
             timestamp: session.lastActivity,
             detail: `${format(used)} active input tokens of ${format(window)} (${Math.round((used / window) * 100)}%)`,
         })),
-        calculation: "Latest active input context divided by that model's logged context window; warning threshold is approximately 80%.",
+        method: "Compares the latest active input context with the model's logged context window. The warning threshold is approximately 80%.",
         caveat: "This is current context occupancy, not cumulative session tokens; cached input is already included and is not added again.",
     };
 };
@@ -222,6 +227,7 @@ const detectHeavyStartup = (sessions: readonly SessionSummary[]): Insight | unde
                 kind: InsightKind.HeavyStartup,
                 rank: 50,
                 title: "New conversations use many tokens before work begins",
+                cause: `${heavy.length} of ${starts.length} reviewed conversations in this project began with at least ${format(HEAVY_STARTUP_INPUT_TOKENS)} input tokens.`,
                 action: "If this is unexpected, review the instructions and tools loaded when a conversation starts.",
                 events: heavy.slice(0, MAX_INSIGHTS).map(({ session, turn }) => ({
                     session: session.project,
@@ -229,7 +235,7 @@ const detectHeavyStartup = (sessions: readonly SessionSummary[]): Insight | unde
                     timestamp: turn.timestamp,
                     detail: `${format(turn.usage.inputTokens)} input tokens on the first logged call`,
                 })),
-                calculation: `${heavy.length} of ${starts.length} sampled root sessions began with at least 20,000 input tokens.`,
+                method: `Requires at least ${MIN_HEAVY_STARTUP_SESSIONS} conversations in one project, with at least ${Math.round(HEAVY_STARTUP_RATIO * 100)}% beginning above ${format(HEAVY_STARTUP_INPUT_TOKENS)} input tokens.`,
                 caveat: "This suggests a possible startup cause; it does not identify which instructions or tools were responsible.",
             };
         }

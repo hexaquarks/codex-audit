@@ -49,6 +49,8 @@ test("labels a session-derived insight with its source session", () => {
     const report = createUsageReport([outputFloodSession], 1);
 
     assert.match(report, /SEVERAL RESULTS WERE LARGE  from investigation-repo/);
+    assert.match(report, /Why: 3 results were at least 12,000 bytes in the session logs/);
+    assert.match(report, /Possible next step:/);
 });
 
 test("uses ANSI styling only when the terminal style enables it", () => {
