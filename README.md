@@ -2,22 +2,19 @@
 
 A local, read-only CLI for finding actionable token-usage patterns in Codex session logs.
 
+> Work in progress. The reports and insights are still evolving.
+
 ```sh
 npm run build
 node dist/index.js --sessions 5
 node dist/index.js open
+node dist/index.js demo
 ```
 
 It reports the most recently active root sessions and at most three ranked insights:
 
-- costliest turns with adjacent tool activity;
 - repeated failed commands or identical file reads without an intervening edit;
-- repeated large tool results;
-- active context at roughly 80% of the model context window; and
-- consistently heavy first calls across sessions in a repository.
-
-It never prints prompt, command, path, or tool-output content. Cached input is already part of input usage, and cumulative session usage is read from the latest snapshot rather than summed from repeatable per-call events. Logged tool-output bytes are treated only as a context-size proxy.
+- active context at 75% or more of the model context window; and
+- repeated unusually long tool outputs.
 
 Each audit saves a privacy-preserving local snapshot. Run `node dist/index.js open` to view the latest snapshot as an expandable browser report. The saved report contains no prompts, commands, paths, or tool-output content.
-
-When run interactively, the CLI uses a short loading indicator and ANSI color to reinforce headings and attention states. Piped output remains plain, and setting `NO_COLOR` disables color.
