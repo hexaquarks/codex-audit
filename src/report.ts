@@ -62,10 +62,6 @@ const formatInsightTitle = (insight: Insight, style: TerminalStyle): string => {
 			return style.warning(title);
 		case InsightKind.LargeToolOutputs:
 			return style.accent(title);
-		case InsightKind.HeavyStartup:
-			return style.warning(title);
-		case InsightKind.CostliestTurns:
-			return style.accent(title);
 	}
 };
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SessionSummary, TokenUsage, ToolCall, TurnUsage } from "../src/audit.js";
+import type { SessionSummary, TokenUsage, ToolCall } from "../src/audit.js";
 import { findInsights, InsightKind } from "../src/insights.js";
 
 const createUsage = (inputTokens: number, totalTokens = inputTokens): TokenUsage => ({
@@ -165,55 +165,6 @@ test("does not flag similarly sized tool outputs as unusual", () => {
 	const insight = findInsights([createSession({ tools })]).find(
 		(item) => item.kind === InsightKind.LargeToolOutputs,
 	);
-
-	assert.equal(insight, undefined);
-});
-
-test("does not present high token totals as a diagnosed finding", () => {
-	const turns: TurnUsage[] = [
-		{
-			timestamp: "2026-01-01T00:00:01Z",
-			userTurn: 1,
-			usage: createUsage(20),
-			tools: [],
-		},
-		{
-			timestamp: "2026-01-01T00:00:02Z",
-			userTurn: 1,
-			usage: createUsage(25),
-			tools: [],
-		},
-		{
-			timestamp: "2026-01-01T00:00:03Z",
-			userTurn: 2,
-			usage: createUsage(24),
-			tools: [],
-		},
-	];
-
-	const insight = findInsights([createSession({ turns })]).find(
-		(item) => item.kind === InsightKind.CostliestTurns,
-	);
-
-	assert.equal(insight, undefined);
-});
-
-test("does not present high initial token use without attribution", () => {
-	const sessions = [1, 2, 3].map((number) =>
-		createSession({
-			sessionId: `session-${number}`,
-			turns: [
-				{
-					timestamp: `2026-01-01T00:00:0${number}Z`,
-					userTurn: 1,
-					usage: createUsage(20_000),
-					tools: [],
-				},
-			],
-		}),
-	);
-
-	const insight = findInsights(sessions).find((item) => item.kind === InsightKind.HeavyStartup);
 
 	assert.equal(insight, undefined);
 });

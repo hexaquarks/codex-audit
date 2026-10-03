@@ -1,11 +1,6 @@
-import type { SessionSummary, ToolCall, TurnUsage } from "./audit.js";
+import type { SessionSummary, ToolCall } from "./audit.js";
 
 export const InsightKind = {
-	/**
-	 * Ranks the most token-heavy requests for investigation only.
-	 * Useful when comparing sessions; for example, finding a request that used far more tokens than nearby work.
-	 */
-	CostliestTurns: "costliest_turns",
 	/**
 	 * Detects an identical failed tool action repeated without a detected file edit.
 	 * Useful for spotting stuck work; for example, running the same failing test command three times unchanged.
@@ -26,11 +21,6 @@ export const InsightKind = {
 	 * Useful before continuing a long investigation; for example, a request using 80% of available context.
 	 */
 	CrowdedContext: "crowded_context",
-	/**
-	 * Finds projects where most conversations begin with unusually large input context.
-	 * Useful for investigating startup overhead; for example, three new conversations loading 20,000 input tokens each.
-	 */
-	HeavyStartup: "heavy_startup",
 } as const;
 
 export type InsightKind = (typeof InsightKind)[keyof typeof InsightKind];
@@ -87,56 +77,11 @@ const toolSummary = (tools: readonly ToolCall[]): string => {
 };
 
 const MAX_FINDINGS = 3;
-const MAX_HIGHEST_TOKEN_REQUESTS = 3;
 const MIN_REPEATED_CALLS = 3;
 const MIN_OUTPUTS_FOR_COMPARISON = 3;
 const OUTPUT_OUTLIER_MULTIPLIER = 4;
 const CONTEXT_REVIEW_RATIO = 0.75;
 const CONTEXT_ACTION_RATIO = 0.8;
-const HEAVY_STARTUP_INPUT_TOKENS = 20_000;
-const MIN_HEAVY_STARTUP_SESSIONS = 3;
-const HEAVY_STARTUP_RATIO = 0.75;
-
-const detectCostliestTurns = (sessions: readonly SessionSummary[]): Insight | undefined => {
-	const mostCostlyByTurn = new Map<string, { session: SessionSummary; turn: TurnUsage }>();
-
-	for (const session of sessions) {
-		for (const turn of session.turns) {
-			if (turn.usage.totalTokens <= 0) continue;
-
-			const key = `${session.sessionId}:${turn.userTurn}`;
-			const existing = mostCostlyByTurn.get(key);
-
-			if (!existing || turn.usage.totalTokens > existing.turn.usage.totalTokens) {
-				mostCostlyByTurn.set(key, { session, turn });
-			}
-		}
-	}
-
-	const candidates = [...mostCostlyByTurn.values()]
-		.sort((a, b) => b.turn.usage.totalTokens - a.turn.usage.totalTokens)
-		.slice(0, MAX_HIGHEST_TOKEN_REQUESTS);
-
-	if (!candidates.length) return undefined;
-
-	return {
-		kind: InsightKind.CostliestTurns,
-		rank: 10,
-		title: "Highest token use",
-		cause: "These requests used more tokens than the other requests in the sessions reviewed.",
-		action: "Use this list to see which requests used the most tokens.",
-		events: candidates.map(({ session, turn }) => ({
-			session: session.project,
-			turn: turn.userTurn,
-			timestamp: turn.timestamp,
-			activity: toolSummary(turn.tools),
-			recordedTokens: turn.usage.totalTokens,
-			detail: `${format(turn.usage.totalTokens)} tokens; ${toolSummary(turn.tools)}`,
-		})),
-		method: "Ranks the highest token total recorded for each request. Repeated token snapshots within one request are not added together.",
-		caveat: "A costly turn is investigation context, not a warning, and does not prove the tools caused the token use.",
-	};
-};
 
 interface RepeatedToolGroup {
 	tool: ToolCall; // First call in the repeated sequence.
@@ -337,57 +282,11 @@ const detectCrowdedContext = (sessions: readonly SessionSummary[]): Insight | un
 	};
 };
 
-const detectHeavyStartup = (sessions: readonly SessionSummary[]): Insight | undefined => {
-	const byProject = new Map<string, { session: SessionSummary; turn: TurnUsage }[]>();
-
-	for (const session of sessions) {
-		const turn = session.turns[0];
-		if (!turn) continue;
-
-		byProject.set(session.projectPath, [
-			...(byProject.get(session.projectPath) ?? []),
-			{ session, turn },
-		]);
-	}
-
-	for (const starts of byProject.values()) {
-		const heavy = starts.filter(
-			({ turn }) => turn.usage.inputTokens >= HEAVY_STARTUP_INPUT_TOKENS,
-		);
-
-		if (
-			heavy.length >= MIN_HEAVY_STARTUP_SESSIONS &&
-			heavy.length / starts.length >= HEAVY_STARTUP_RATIO
-		) {
-			return {
-				kind: InsightKind.HeavyStartup,
-				rank: 50,
-				title: "New conversations use many tokens before work begins",
-				cause: `${heavy.length} of ${starts.length} reviewed conversations in this project began with at least ${format(HEAVY_STARTUP_INPUT_TOKENS)} input tokens.`,
-				action: "If this is unexpected, review the instructions and tools loaded when a conversation starts.",
-				events: heavy.map(({ session, turn }) => ({
-					session: session.project,
-					turn: turn.userTurn,
-					timestamp: turn.timestamp,
-					recordedTokens: turn.usage.inputTokens,
-					detail: `${format(turn.usage.inputTokens)} input tokens on the first logged call`,
-				})),
-				method: `Requires at least ${MIN_HEAVY_STARTUP_SESSIONS} conversations in one project, with at least ${Math.round(HEAVY_STARTUP_RATIO * 100)}% beginning above ${format(HEAVY_STARTUP_INPUT_TOKENS)} input tokens.`,
-				caveat: "This suggests a possible startup cause; it does not identify which instructions or tools were responsible.",
-			};
-		}
-	}
-
-	return undefined;
-};
-
 const detectorByKind: Record<InsightKind, InsightDetector> = {
-	[InsightKind.CostliestTurns]: detectCostliestTurns,
 	[InsightKind.RetryLoop]: detectRetryLoop,
 	[InsightKind.RedundantRead]: detectRedundantRead,
 	[InsightKind.LargeToolOutputs]: detectLargeToolOutputs,
 	[InsightKind.CrowdedContext]: detectCrowdedContext,
-	[InsightKind.HeavyStartup]: detectHeavyStartup,
 };
 
 const insightOrder: InsightKind[] = [

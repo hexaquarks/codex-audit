@@ -41,7 +41,6 @@ const insightMetric = (insight: Insight): string => {
 	if (insight.kind === InsightKind.LargeToolOutputs)
 		return formatSize(totalBytes(insight.events));
 	if (insight.kind === InsightKind.CrowdedContext) return `${insight.events.length} sessions`;
-	if (insight.kind === InsightKind.HeavyStartup) return `${insight.events.length} sessions`;
 	return `${insight.events.length} events`;
 };
 
